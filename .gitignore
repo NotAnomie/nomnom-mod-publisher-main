@@ -1,0 +1,12 @@
+.vs/
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+*.suo
+*.pdb
+*.cache
+*.log
+*.tmp
+*.exe
+*.zip
