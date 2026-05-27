@@ -198,10 +198,26 @@ public sealed class GitHubClient
 
     public async Task EnsureBranchAsync(string owner, string repo, string branch, string fromSha, CancellationToken cancellationToken)
     {
+        await EnsureBranchFromBaseAsync(owner, repo, branch, fromSha, false, cancellationToken);
+    }
+
+    public async Task EnsureBranchFromBaseAsync(string owner, string repo, string branch, string fromSha, bool forceResetExistingBranch, CancellationToken cancellationToken)
+    {
         using (var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{Uri.EscapeDataString(branch)}"))
         using (var response = await http.SendAsync(request, cancellationToken))
         {
-            if (response.IsSuccessStatusCode) return;
+            if (response.IsSuccessStatusCode)
+            {
+                if (!forceResetExistingBranch) return;
+
+                var resetPayload = new JsonObject
+                {
+                    ["sha"] = fromSha,
+                    ["force"] = true
+                };
+                await SendJsonAsync(new HttpMethod("PATCH"), $"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/{Uri.EscapeDataString(branch)}", resetPayload, cancellationToken);
+                return;
+            }
             if (response.StatusCode != HttpStatusCode.NotFound) throw await BuildErrorAsync(response, cancellationToken);
         }
         var payload = new JsonObject
@@ -210,6 +226,47 @@ public sealed class GitHubClient
             ["sha"] = fromSha
         };
         await SendJsonAsync(HttpMethod.Post, $"https://api.github.com/repos/{owner}/{repo}/git/refs", payload, cancellationToken);
+    }
+
+    public async Task SyncForkBranchFromUpstreamAsync(string forkOwner, string forkRepo, string branch, Action<string> log, CancellationToken cancellationToken)
+    {
+        var payload = new JsonObject
+        {
+            ["branch"] = branch
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.github.com/repos/{forkOwner}/{forkRepo}/merge-upstream");
+        request.Content = new StringContent(payload.ToJsonString(JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await http.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var message = "Fork branch synced from upstream.";
+            try
+            {
+                var node = JsonNode.Parse(body);
+                message = node?["message"]?.GetValue<string>() ?? message;
+            }
+            catch
+            {
+            }
+            log(message);
+            return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            throw new InvalidOperationException($"GitHub fork sync reported a conflict. Sync or reset your fork from the PR target branch, then try again.\r\n{body}");
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            log("GitHub merge-upstream endpoint was not available for this repository. Continuing with the current fork branch.");
+            return;
+        }
+
+        throw new InvalidOperationException($"GitHub fork sync failed: {(int)response.StatusCode} {response.ReasonPhrase}\r\n{body}");
     }
 
     public async Task<string?> GetFileShaAsync(string owner, string repo, string path, string branch, CancellationToken cancellationToken)
@@ -245,8 +302,33 @@ public sealed class GitHubClient
             ["base"] = baseBranch,
             ["maintainer_can_modify"] = true
         };
-        var node = await SendJsonAsync(HttpMethod.Post, $"https://api.github.com/repos/{upstreamOwner}/{upstreamRepo}/pulls", payload, cancellationToken);
-        return node?["html_url"]?.GetValue<string>() ?? "";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.github.com/repos/{upstreamOwner}/{upstreamRepo}/pulls");
+        request.Content = new StringContent(payload.ToJsonString(JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await http.SendAsync(request, cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var node = JsonNode.Parse(json);
+            return node?["html_url"]?.GetValue<string>() ?? "";
+        }
+
+        if (response.StatusCode == HttpStatusCode.UnprocessableEntity && json.Contains("pull request", StringComparison.OrdinalIgnoreCase))
+        {
+            var existing = await FindOpenPullRequestAsync(upstreamOwner, upstreamRepo, head, baseBranch, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(existing)) return existing;
+        }
+
+        throw new InvalidOperationException($"GitHub API failed: {(int)response.StatusCode} {response.ReasonPhrase}\r\n{json}");
+    }
+
+    private async Task<string> FindOpenPullRequestAsync(string upstreamOwner, string upstreamRepo, string head, string baseBranch, CancellationToken cancellationToken)
+    {
+        var url = $"https://api.github.com/repos/{upstreamOwner}/{upstreamRepo}/pulls?state=open&head={Uri.EscapeDataString(head)}&base={Uri.EscapeDataString(baseBranch)}";
+        var array = await SendJsonArrayAsync(HttpMethod.Get, url, null, cancellationToken);
+        var first = array.Count > 0 ? array[0] : null;
+        return first?["html_url"]?.GetValue<string>() ?? "";
     }
 
 

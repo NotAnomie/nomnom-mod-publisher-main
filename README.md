@@ -32,6 +32,7 @@ The tool is meant for mod authors who already have a working mod and want to pub
 - release asset hash support
 - NOMNOM manifest generation
 - configurable PR target repository
+- automatic fork sync/rebase before committing generated PR changes
 - automatic fork and pull request creation
 - mod browser for own releases and submitted manifests
 - read-only official catalog browsing
@@ -272,7 +273,9 @@ The hash is taken from the GitHub release asset digest when available. If GitHub
 
 Click **Fork + open PR**.
 
-The tool commits the manifest into your fork and opens a pull request against the configured target repository.
+The tool first syncs your fork from the configured target repository and resets the generated PR branch to the latest target branch before committing the manifest. This keeps generated pull requests based on the maintainer's current `main` instead of an older fork state.
+
+After that, it commits the manifest into your fork and opens or reuses a pull request against the configured target repository.
 
 Default target:
 

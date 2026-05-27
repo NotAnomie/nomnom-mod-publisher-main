@@ -318,12 +318,12 @@ public sealed class AnomiePublisherForm : Form
         releaseRepoBox = AddText(grid, "Release Repository", "Auto: one repo per mod", false, 30);
         createReleaseRepoBox = AddCheck(grid, "Create missing release repo", true);
         privateReleaseRepoBox = AddCheck(grid, "Private release repo", false);
+        autoUpdateBox = AddCheck(grid, "Enable NOMNOM auto-update fields", true);
         upstreamOwnerBox = AddText(grid, "PR Target Owner", "KopterBuzz", false, 30);
         upstreamRepoBox = AddText(grid, "PR Target Repository", "NOMNOM", false, 30);
         upstreamBranchBox = AddText(grid, "PR Target Branch", "main", false, 30);
         manifestFolderBox = AddText(grid, "Manifest Folder", "modManifests", false, 30);
         createPrBox = AddCheck(grid, "Create pull request automatically", true);
-        autoUpdateBox = AddCheck(grid, "Enable NOMNOM auto-update fields", true);
         return page;
     }
 
@@ -605,7 +605,8 @@ public sealed class AnomiePublisherForm : Form
         {
             BackColor = AnomieTheme.Background,
             ForeColor = AnomieTheme.Text,
-            Padding = new Padding(0)
+            Padding = new Padding(0),
+            AutoScroll = true
         };
     }
 
@@ -613,11 +614,14 @@ public sealed class AnomiePublisherForm : Form
     {
         var grid = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            AutoScroll = true,
+            AutoScroll = false,
             BackColor = AnomieTheme.Background,
-            Padding = new Padding(18)
+            Padding = new Padding(18, 18, 18, 90),
+            GrowStyle = TableLayoutPanelGrowStyle.AddRows
         };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -1301,8 +1305,11 @@ public sealed class AnomiePublisherForm : Form
         await github.CreateForkAsync(upstreamOwner, upstreamRepo, CancellationToken.None);
         await github.WaitForForkAsync(login, upstreamRepo, Log, CancellationToken.None);
 
-        var baseSha = await github.GetBranchShaAsync(login, upstreamRepo, upstreamBranch, CancellationToken.None);
-        await github.EnsureBranchAsync(login, upstreamRepo, branch, baseSha, CancellationToken.None);
+        Log($"Syncing fork branch {login}/{upstreamRepo}:{upstreamBranch} from {upstreamOwner}/{upstreamRepo}:{upstreamBranch}...");
+        await github.SyncForkBranchFromUpstreamAsync(login, upstreamRepo, upstreamBranch, Log, CancellationToken.None);
+        var baseSha = await github.GetBranchShaAsync(upstreamOwner, upstreamRepo, upstreamBranch, CancellationToken.None);
+        Log($"Rebasing generated PR branch from latest {upstreamOwner}/{upstreamRepo}:{upstreamBranch}: {branch}");
+        await github.EnsureBranchFromBaseAsync(login, upstreamRepo, branch, baseSha, true, CancellationToken.None);
         var oldSha = await github.GetFileShaAsync(login, upstreamRepo, path, branch, CancellationToken.None);
         var message = $"Add {input.DisplayName} manifest";
         await github.CommitFileAsync(login, upstreamRepo, branch, path, generatedManifest, message, oldSha, CancellationToken.None);
@@ -2128,9 +2135,12 @@ public sealed class AnomiePublisherForm : Form
         var login = await EnsureGitHubLoginAsync(github, CancellationToken.None);
         await github.CreateForkAsync(settings.UpstreamOwner, settings.UpstreamRepo, CancellationToken.None);
         await github.WaitForForkAsync(login, settings.UpstreamRepo, Log, CancellationToken.None);
-        var baseSha = await github.GetBranchShaAsync(login, settings.UpstreamRepo, settings.UpstreamBranch, CancellationToken.None);
+        Log($"Syncing fork branch {login}/{settings.UpstreamRepo}:{settings.UpstreamBranch} from {settings.UpstreamOwner}/{settings.UpstreamRepo}:{settings.UpstreamBranch}...");
+        await github.SyncForkBranchFromUpstreamAsync(login, settings.UpstreamRepo, settings.UpstreamBranch, Log, CancellationToken.None);
+        var baseSha = await github.GetBranchShaAsync(settings.UpstreamOwner, settings.UpstreamRepo, settings.UpstreamBranch, CancellationToken.None);
         var branch = BuildSafeBranchName("anomie-ui/delete", item.ModId, DateTime.UtcNow.ToString("yyyyMMddHHmmss"));
-        await github.EnsureBranchAsync(login, settings.UpstreamRepo, branch, baseSha, CancellationToken.None);
+        Log($"Rebasing generated delete branch from latest {settings.UpstreamOwner}/{settings.UpstreamRepo}:{settings.UpstreamBranch}: {branch}");
+        await github.EnsureBranchFromBaseAsync(login, settings.UpstreamRepo, branch, baseSha, true, CancellationToken.None);
         var sha = await github.GetFileShaAsync(login, settings.UpstreamRepo, item.ManifestPath, branch, CancellationToken.None) ?? throw new InvalidOperationException("Could not find manifest in your fork branch.");
         await github.DeleteFileAsync(login, settings.UpstreamRepo, branch, item.ManifestPath, $"Remove {item.ModId} manifest", sha, CancellationToken.None);
         var prUrl = await github.CreatePullRequestAsync(settings.UpstreamOwner, settings.UpstreamRepo, $"Remove {item.ModId}", $"Removes NOMNOM manifest `{item.ManifestPath}`.\n\nCreated with Anomie UI NOMNOM Publisher.", $"{login}:{branch}", settings.UpstreamBranch, CancellationToken.None);
