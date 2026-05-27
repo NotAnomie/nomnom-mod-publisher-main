@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace AmonieNomnomPublisher.Models;
+namespace AnomieNomnomPublisher.Models;
 
 public sealed class ManifestInput
 {

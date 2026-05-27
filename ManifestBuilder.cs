@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
-using AmonieNomnomPublisher.Models;
+using AnomieNomnomPublisher.Models;
 
-namespace AmonieNomnomPublisher;
+namespace AnomieNomnomPublisher;
 
 public static class ManifestBuilder
 {

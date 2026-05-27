@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace AmonieNomnomPublisher.Models;
+namespace AnomieNomnomPublisher.Models;
 
 public sealed class OAuthDeviceCodeResponse
 {

@@ -10,9 +10,9 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
-using AmonieNomnomPublisher.Models;
+using AnomieNomnomPublisher.Models;
 
-namespace AmonieNomnomPublisher;
+namespace AnomieNomnomPublisher;
 
 public sealed class GitHubClient
 {

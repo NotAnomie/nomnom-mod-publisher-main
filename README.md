@@ -357,6 +357,13 @@ C:\Users\<you>\AppData\Roaming\Anomie\NomnomPublisher\settings.json
 
 The GitHub access token is stored encrypted for the current Windows user.
 
+Old test builds may have used:
+
+```text
+%APPDATA%\Anomie\NomnomPublisher\
+```
+
+That path can be deleted after confirming the new settings path works.
 
 ## Release ZIP output
 

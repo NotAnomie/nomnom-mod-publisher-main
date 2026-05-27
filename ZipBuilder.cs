@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 
-namespace AmonieNomnomPublisher;
+namespace AnomieNomnomPublisher;
 
 public static class ZipBuilder
 {

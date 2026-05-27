@@ -81,6 +81,12 @@ public sealed class AnomiePublisherForm : Form
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         settingsPath = Path.Combine(appData, "Anomie", "NomnomPublisher", "settings.json");
+        var oldSettingsPath = Path.Combine(appData, "Anomie", "NomnomPublisher", "settings.json");
+        if (!File.Exists(settingsPath) && File.Exists(oldSettingsPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+            File.Copy(oldSettingsPath, settingsPath, true);
+        }
         settings = AppSettings.Load(settingsPath);
         NormalizeSettings();
         accessToken = SecureTokenStore.Unprotect(settings.EncryptedAccessToken);

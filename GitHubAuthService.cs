@@ -7,9 +7,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
-using AmonieNomnomPublisher.Models;
+using AnomieNomnomPublisher.Models;
 
-namespace AmonieNomnomPublisher;
+namespace AnomieNomnomPublisher;
 
 public sealed class GitHubAuthService
 {
@@ -24,7 +24,7 @@ public sealed class GitHubAuthService
     {
         http = new HttpClient();
         http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("AmonieNomnomPublisher/1.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("AnomieNomnomPublisher/1.0");
     }
 
     public async Task<OAuthDeviceCodeResponse> RequestDeviceCodeAsync(string clientId, string scopes, CancellationToken cancellationToken)

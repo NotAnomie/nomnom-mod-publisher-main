@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Security.Cryptography;
 
-namespace AmonieNomnomPublisher;
+namespace AnomieNomnomPublisher;
 
 public sealed class AppSettings
 {
