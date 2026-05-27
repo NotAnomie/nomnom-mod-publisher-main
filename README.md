@@ -25,7 +25,7 @@ The tool is meant for mod authors who already have a working mod and want to pub
 - GitHub sign-in through OAuth Device Flow
 - no manual token copy/paste for normal use
 - automatic GitHub account detection
-- automatic release repository creation
+- automatic per-mod release repository creation
 - BepInEx metadata reading from DLLs
 - release ZIP creation
 - GitHub release upload
@@ -247,6 +247,8 @@ Click **Upload GitHub release**.
 
 The tool creates or reuses the selected release tag and uploads the ZIP as a release asset.
 
+Important: NOMNOM auto-update expects **one GitHub release repository per mod**. Do not put every mod release into one shared repository. The tool will generate names like `NOMNOM-anomie-cargorequest` so NOMNOM can treat that repository as one software package with multiple versions.
+
 After upload, it stores:
 
 - release download URL
@@ -282,6 +284,28 @@ folder: modManifests
 
 The target owner/repository/branch are configurable for testing or future registry forks.
 
+## Release repository rule
+
+NOMNOM auto-update checks one GitHub repository, reads its releases, and treats newer release tags as newer artifacts for the same mod.
+
+Because of that, every mod should have its **own** release repository.
+
+Good:
+
+```text
+NotAnomie/NOMNOM-anomie-cargorequest
+NotAnomie/NOMNOM-emi-shoshanas-spawntool
+NotAnomie/NOMNOM-emi-shoshanas-maptargetselectguard
+```
+
+Bad:
+
+```text
+NotAnomie/Nomnom-Mod-Releases
+```
+
+A single shared release repository can still host differently named ZIP files, but NOMNOM auto-update has no concept of multiple different mods inside one repo.
+
 ## Updating a mod
 
 For a normal update:
@@ -291,7 +315,7 @@ For a normal update:
 3. select the new DLL
 4. read DLL metadata
 5. build a new ZIP
-6. upload a new GitHub release
+6. upload a new GitHub release to that mod's own release repo
 7. generate the updated manifest
 8. open an update PR
 
@@ -389,6 +413,7 @@ This project should stay strict about safety boundaries:
 - keep official catalog entries read-only
 - validate that file names match mod IDs
 - validate that download URLs match the configured release repository
+- keep release repositories one-mod-only when auto-update fields are enabled
 - prefer explicit user actions over silent destructive changes
 
 The goal is to remove repetitive work, not to remove review.

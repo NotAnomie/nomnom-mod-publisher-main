@@ -19,7 +19,7 @@ public sealed class AppSettings
     public string OAuthClientId { get; set; } = "";
     public string EncryptedAccessToken { get; set; } = "";
     public string GitHubLogin { get; set; } = "";
-    public string ReleaseRepo { get; set; } = "Nomnom-Mod-Releases";
+    public string ReleaseRepo { get; set; } = "";
     public bool CreateReleaseRepo { get; set; } = true;
     public bool PrivateReleaseRepo { get; set; }
     public string UpstreamOwner { get; set; } = "KopterBuzz";

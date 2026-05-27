@@ -74,7 +74,8 @@ public sealed class AnomiePublisherForm : Form
     private ComboBox browserSourceBox = null!;
     private Label browserCountLabel = null!;
     private readonly List<BrowserModItem> browserItems = new();
-    private const string DefaultReleaseRepository = "Nomnom-Mod-Releases";
+    private const string LegacySharedReleaseRepository = "Nomnom-Mod-Releases";
+    private const string ReleaseRepositoryPrefix = "NOMNOM";
     private bool editorLoadedFromBrowserManifest;
 
     public AnomiePublisherForm()
@@ -313,8 +314,8 @@ public sealed class AnomiePublisherForm : Form
         AddButtonRow(grid, "Browser", "Open verification page", () => Task.Run(() => GitHubAuthService.OpenBrowser(string.IsNullOrWhiteSpace(verificationUrlBox.Text) ? "https://github.com/login/device" : verificationUrlBox.Text)), false);
         accountBox = AddText(grid, "Detected GitHub Account", "Resolved automatically after login", true, 30);
 
-        AddSection(grid, "Repositories", "The release repo stores your ZIP files. The PR target repository can be changed for NOMNOM forks or test registries.");
-        releaseRepoBox = AddText(grid, "Release Repository", "Nomnom-Mod-Releases", false, 30);
+        AddSection(grid, "Repositories", "NOMNOM auto-update expects one GitHub release repository per mod. The PR target can still be changed for NOMNOM forks or test registries.");
+        releaseRepoBox = AddText(grid, "Release Repository", "Auto: one repo per mod", false, 30);
         createReleaseRepoBox = AddCheck(grid, "Create missing release repo", true);
         privateReleaseRepoBox = AddCheck(grid, "Private release repo", false);
         upstreamOwnerBox = AddText(grid, "PR Target Owner", "KopterBuzz", false, 30);
@@ -1091,9 +1092,11 @@ public sealed class AnomiePublisherForm : Form
         versionBox.Text = meta.Version;
         releaseTagBox.Text = $"v{meta.Version}";
 
-        if (string.IsNullOrWhiteSpace(releaseRepoBox.Text) || IsForeignReleaseRepoForMod(releaseRepoBox.Text, meta.ModId) || wasBrowserImport)
+        if (ShouldAutoReplaceReleaseRepo(releaseRepoBox.Text, meta.ModId, wasBrowserImport))
         {
-            releaseRepoBox.Text = DefaultReleaseRepository;
+            var perModRepo = BuildDefaultReleaseRepoName(meta.ModId, meta.DisplayName);
+            releaseRepoBox.Text = perModRepo;
+            Log($"Release repository set for NOMNOM auto-update: {perModRepo}");
         }
 
         var outDir = Path.Combine(Path.GetDirectoryName(dll) ?? Environment.CurrentDirectory, "nomnom-release");
@@ -1200,9 +1203,10 @@ public sealed class AnomiePublisherForm : Form
         SaveSettingsFromUi();
         var github = RequireGitHubClient();
         var login = await EnsureGitHubLoginAsync(github, CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(settings.ReleaseRepo)) throw new InvalidOperationException("Release repository is required.");
         if (!File.Exists(settings.OutputZip)) throw new FileNotFoundException("Output ZIP not found.", settings.OutputZip);
         ValidatePublishTargetForSelectedMod();
+        SaveSettingsFromUi();
+        if (string.IsNullOrWhiteSpace(settings.ReleaseRepo)) throw new InvalidOperationException("Release repository is required.");
         if (settings.CreateReleaseRepo && !await github.RepoExistsAsync(login, settings.ReleaseRepo, CancellationToken.None))
         {
             Log($"Creating release repository: {login}/{settings.ReleaseRepo}");
@@ -1798,10 +1802,23 @@ public sealed class AnomiePublisherForm : Form
         versionBox.Text = version;
         releaseTagBox.Text = string.IsNullOrWhiteSpace(version) ? item.Version : $"v{version}";
         fileNameBox.Text = item.FileName;
-        downloadUrlBox.Text = item.DownloadUrl;
-        hashBox.Text = item.Hash;
-        infoUrlBox.Text = item.HtmlUrl;
-        releaseRepoBox.Text = item.Repo;
+        var recommendedRepo = BuildDefaultReleaseRepoName(modId, item.DisplayName);
+        if (IsLegacySharedReleaseRepo(item.Repo) || IsForeignReleaseRepoForMod(item.Repo, modId))
+        {
+            releaseRepoBox.Text = recommendedRepo;
+            downloadUrlBox.Text = "";
+            hashBox.Text = "";
+            var login = accountBox.Text.Trim();
+            infoUrlBox.Text = string.IsNullOrWhiteSpace(login) ? "" : $"https://github.com/{login}/{recommendedRepo}";
+            Log($"Loaded old/shared release as reference only. New uploads for {modId} will use per-mod repo: {recommendedRepo}");
+        }
+        else
+        {
+            releaseRepoBox.Text = item.Repo;
+            downloadUrlBox.Text = item.DownloadUrl;
+            hashBox.Text = item.Hash;
+            infoUrlBox.Text = item.HtmlUrl;
+        }
         SetCombo(artifactTypeBox, "plugin");
         SetCombo(categoryBox, "Release");
         dependenciesBox.Text = "";
@@ -1927,10 +1944,18 @@ public sealed class AnomiePublisherForm : Form
     {
         SaveSettingsFromUi();
         if (string.IsNullOrWhiteSpace(settings.ModId)) throw new InvalidOperationException("Mod ID is empty. Select your DLL and read metadata first.");
-        if (string.IsNullOrWhiteSpace(settings.ReleaseRepo)) releaseRepoBox.Text = DefaultReleaseRepository;
-        if (IsForeignReleaseRepoForMod(releaseRepoBox.Text, settings.ModId))
+        var recommendedRepo = BuildDefaultReleaseRepoName(settings.ModId, settings.DisplayName);
+
+        if (string.IsNullOrWhiteSpace(settings.ReleaseRepo) || IsLegacySharedReleaseRepo(settings.ReleaseRepo))
         {
-            throw new InvalidOperationException($"Release repository '{releaseRepoBox.Text}' does not match the selected mod '{settings.ModId}'. This is a safety stop to prevent uploading your DLL into another mod's repo. Set Release Repository to '{DefaultReleaseRepository}' or to a repo name that clearly matches your mod, then try again.");
+            releaseRepoBox.Text = recommendedRepo;
+            settings.ReleaseRepo = recommendedRepo;
+            Log($"Release repository changed to per-mod repo: {recommendedRepo}");
+        }
+
+        if (IsForeignReleaseRepoForMod(settings.ReleaseRepo, settings.ModId))
+        {
+            throw new InvalidOperationException($"Release repository '{settings.ReleaseRepo}' does not match the selected mod '{settings.ModId}'. NOMNOM auto-update expects one GitHub release repository per mod. Use '{recommendedRepo}' or another repo name that clearly matches this mod.");
         }
     }
 
@@ -1940,9 +1965,13 @@ public sealed class AnomiePublisherForm : Form
         if (string.IsNullOrWhiteSpace(input.Hash)) throw new InvalidOperationException("Release hash is required. Upload the release asset first or keep the generated ZIP so the tool can calculate sha256.");
         if (!input.Hash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Release hash must use NOMNOM/GitHub digest format: sha256:<hex>.");
         if (string.IsNullOrWhiteSpace(input.GitHubRepoName)) throw new InvalidOperationException("Release repository is required.");
+        if (input.AutoUpdateArtifacts && IsLegacySharedReleaseRepo(input.GitHubRepoName))
+        {
+            throw new InvalidOperationException($"Manifest blocked: '{input.GitHubRepoName}' is a shared release repository. NOMNOM auto-update expects one GitHub release repository per mod. Use '{BuildDefaultReleaseRepoName(input.ModId, input.DisplayName)}'.");
+        }
         if (IsForeignReleaseRepoForMod(input.GitHubRepoName, input.ModId))
         {
-            throw new InvalidOperationException($"Manifest blocked: release repo '{input.GitHubRepoName}' does not match mod '{input.ModId}'. This prevents mixed manifests like Cargo Request metadata inside a Railgun repo.");
+            throw new InvalidOperationException($"Manifest blocked: release repo '{input.GitHubRepoName}' does not match mod '{input.ModId}'. This prevents mixed manifests and keeps NOMNOM auto-update from treating different mods as versions of the same software.");
         }
         if (!string.IsNullOrWhiteSpace(input.GitHubOwner) && input.DownloadUrl.Contains("github.com/", StringComparison.OrdinalIgnoreCase))
         {
@@ -1961,13 +1990,35 @@ public sealed class AnomiePublisherForm : Form
     private static bool IsForeignReleaseRepoForMod(string repo, string modId)
     {
         if (string.IsNullOrWhiteSpace(repo)) return true;
-        if (string.Equals(repo.Trim(), DefaultReleaseRepository, StringComparison.OrdinalIgnoreCase)) return false;
+        if (IsLegacySharedReleaseRepo(repo)) return true;
         var normalizedRepo = BuildSafeBranchPart(repo);
         var normalizedMod = BuildSafeBranchPart(modId);
         if (string.IsNullOrWhiteSpace(normalizedRepo) || string.IsNullOrWhiteSpace(normalizedMod)) return true;
         var compactRepo = normalizedRepo.Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal);
         var compactMod = normalizedMod.Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal);
         return !compactRepo.Contains(compactMod, StringComparison.OrdinalIgnoreCase) && !compactMod.Contains(compactRepo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldAutoReplaceReleaseRepo(string repo, string modId, bool wasBrowserImport)
+    {
+        return wasBrowserImport
+            || string.IsNullOrWhiteSpace(repo)
+            || IsLegacySharedReleaseRepo(repo)
+            || IsForeignReleaseRepoForMod(repo, modId);
+    }
+
+    private static bool IsLegacySharedReleaseRepo(string repo)
+    {
+        return string.Equals(repo?.Trim(), LegacySharedReleaseRepository, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildDefaultReleaseRepoName(string modId, string displayName)
+    {
+        var basis = !string.IsNullOrWhiteSpace(modId) ? modId : displayName;
+        var safe = BuildSafeBranchPart(basis).Trim('-');
+        if (string.IsNullOrWhiteSpace(safe)) safe = "mod";
+        var repo = $"{ReleaseRepositoryPrefix}-{safe}";
+        return repo.Length <= 100 ? repo : repo[..100].Trim('-');
     }
 
     private static bool LooksLikeForeignBlueprinterText(string text)
