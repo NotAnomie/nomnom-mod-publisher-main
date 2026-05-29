@@ -468,7 +468,7 @@ public sealed class AnomiePublisherForm : Form
 
         bar.Controls.Add(MakeBrowserButton("Refresh", async () => await RefreshModBrowserAsync(), true));
         bar.Controls.Add(MakeBrowserButton("Load Selected", async () => await LoadSelectedModAsync(), false));
-        bar.Controls.Add(MakeBrowserButton("Update Selected", async () => await UpdateSelectedModAsync(), true));
+        bar.Controls.Add(MakeBrowserButton("Upload Update Release", async () => await UpdateSelectedModAsync(), true));
         bar.Controls.Add(MakeBrowserButton("Delete Release", async () => await DeleteSelectedReleaseAsync(), false, true));
         bar.Controls.Add(MakeBrowserButton("Delete Manifest PR", async () => await DeleteSelectedManifestPrAsync(), false, true));
         bar.Controls.Add(MakeBrowserButton("Open", async () => await OpenSelectedModUrlAsync(), false));
@@ -912,6 +912,102 @@ public sealed class AnomiePublisherForm : Form
         settings.Save(settingsPath);
     }
 
+    private async Task<bool> TryConfigureExistingNomnomAutoUpdateTargetAsync(string modId, bool verbose)
+    {
+        modId = modId.Trim();
+        if (string.IsNullOrWhiteSpace(modId)) return false;
+
+        var manifest = await TryFindCatalogManifestForModAsync(modId, verbose);
+        if (manifest is null) return false;
+
+        var login = accountBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(login) && !string.Equals(manifest.GitHubOwner, login, StringComparison.OrdinalIgnoreCase))
+        {
+            if (verbose) Log($"Existing NOMNOM manifest found for {modId}, but it belongs to {manifest.GitHubOwner}. This entry will stay read-only.");
+            return false;
+        }
+
+        if (!manifest.AutoUpdateArtifacts || string.IsNullOrWhiteSpace(manifest.GitHubOwner) || string.IsNullOrWhiteSpace(manifest.GitHubRepoName))
+        {
+            if (verbose) Log($"Existing NOMNOM manifest found for {modId}, but auto-update fields are incomplete. A normal manifest PR is still required.");
+            return false;
+        }
+
+        releaseRepoBox.Text = manifest.GitHubRepoName;
+        autoUpdateBox.Checked = true;
+        if (!string.IsNullOrWhiteSpace(manifest.DisplayName)) displayNameBox.Text = manifest.DisplayName;
+        if (!string.IsNullOrWhiteSpace(manifest.Description) && string.IsNullOrWhiteSpace(descriptionBox.Text)) descriptionBox.Text = manifest.Description;
+        if (!string.IsNullOrWhiteSpace(manifest.Description)) SaveDescriptionForModId(modId, manifest.Description);
+        if (!string.IsNullOrWhiteSpace(manifest.Tags) && (string.IsNullOrWhiteSpace(tagsBox.Text) || tagsBox.Text.Equals("QoL,Utility", StringComparison.OrdinalIgnoreCase))) tagsBox.Text = manifest.Tags;
+        if (!string.IsNullOrWhiteSpace(manifest.Authors) && (string.IsNullOrWhiteSpace(authorsBox.Text) || authorsBox.Text.Equals("Anomie", StringComparison.OrdinalIgnoreCase))) authorsBox.Text = manifest.Authors;
+        if (!string.IsNullOrWhiteSpace(manifest.InfoUrl)) infoUrlBox.Text = manifest.InfoUrl;
+        downloadUrlBox.Text = "";
+        hashBox.Text = "";
+        generatedManifest = "";
+        manifestPreviewBox.Text = manifest.Json;
+        SaveSettingsFromUi();
+        Log($"Existing NOMNOM auto-update entry detected for {modId}. Update uploads will use {manifest.GitHubOwner}/{manifest.GitHubRepoName} and will not edit the manifest.");
+        return true;
+    }
+
+    private async Task<CatalogManifestInfo?> TryFindCatalogManifestForModAsync(string modId, bool verbose)
+    {
+        foreach (var item in browserItems)
+        {
+            if (!string.Equals(item.ModId, modId, StringComparison.OrdinalIgnoreCase)) continue;
+            var info = TryParseCatalogManifestInfo(item.ManifestJson, item.Source);
+            if (info is not null && string.Equals(info.ModId, modId, StringComparison.OrdinalIgnoreCase)) return info;
+        }
+
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            if (verbose) Log("Sign in with GitHub to detect whether this Mod ID is already registered in NOMNOM.");
+            return null;
+        }
+
+        SaveSettingsFromUi();
+        var github = new GitHubClient(accessToken);
+        var candidates = BuildCatalogDescriptionCandidates()
+            .OrderByDescending(x => string.Equals(x.Owner, settings.UpstreamOwner, StringComparison.OrdinalIgnoreCase) && string.Equals(x.Repo, settings.UpstreamRepo, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        foreach (var candidate in candidates)
+        {
+            var json = await TryReadCatalogManifestByModIdAsync(github, candidate.Owner, candidate.Repo, candidate.Branch, modId, CancellationToken.None);
+            var info = TryParseCatalogManifestInfo(json, candidate.Label);
+            if (info is not null && string.Equals(info.ModId, modId, StringComparison.OrdinalIgnoreCase)) return info;
+        }
+
+        return null;
+    }
+
+    private static CatalogManifestInfo? TryParseCatalogManifestInfo(string json, string source)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            var node = JsonNode.Parse(json)?.AsObject();
+            if (node is null) return null;
+            return new CatalogManifestInfo
+            {
+                Json = json,
+                Source = source,
+                ModId = node["id"]?.GetValue<string>() ?? "",
+                DisplayName = node["displayName"]?.GetValue<string>() ?? "",
+                Description = node["description"]?.GetValue<string>() ?? "",
+                Tags = JoinJsonArray(node["tags"]),
+                Authors = JoinJsonArray(node["authors"]),
+                InfoUrl = ExtractInfoUrl(node["urls"]),
+                GitHubOwner = node["githubOwner"]?.GetValue<string>() ?? "",
+                GitHubRepoName = node["githubRepoName"]?.GetValue<string>() ?? "",
+                AutoUpdateArtifacts = string.Equals(node["autoUpdateArtifacts"]?.GetValue<string>() ?? "", "True", StringComparison.OrdinalIgnoreCase)
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task PullCatalogDescriptionForCurrentModAsync()
     {
         SaveSettingsFromUi();
@@ -1083,6 +1179,8 @@ public sealed class AnomiePublisherForm : Form
         {
             await TryPullCatalogDescriptionForModAsync(meta.ModId, false, false);
         }
+
+        await TryConfigureExistingNomnomAutoUpdateTargetAsync(meta.ModId, true);
     }
 
     private void ResetEditorForSelectedDll(string dll, AssemblyNameInfo meta)
@@ -1217,8 +1315,14 @@ public sealed class AnomiePublisherForm : Form
             await github.CreateRepoAsync(settings.ReleaseRepo, settings.PrivateReleaseRepo, CancellationToken.None);
         }
         var tag = string.IsNullOrWhiteSpace(releaseTagBox.Text) ? $"v{settings.Version}" : releaseTagBox.Text.Trim();
+        ValidateParsableReleaseTag(tag);
+        var existingRelease = await github.TryGetReleaseByTagAsync(login, settings.ReleaseRepo, tag, CancellationToken.None);
+        if (existingRelease is not null)
+        {
+            throw new InvalidOperationException($"Release tag '{tag}' already exists in {login}/{settings.ReleaseRepo}. Do not update existing GitHub releases because that can destroy download metrics. Increase the BepInPlugin version and upload a new release tag instead.");
+        }
         var title = string.IsNullOrWhiteSpace(settings.DisplayName) ? tag : $"{settings.DisplayName} {tag}";
-        var release = await github.GetOrCreateReleaseAsync(login, settings.ReleaseRepo, tag, title, "Automated release created by Anomie UI NOMNOM Publisher.", CancellationToken.None);
+        var release = await github.CreateReleaseAsync(login, settings.ReleaseRepo, tag, title, "Automated release created by Anomie UI NOMNOM Publisher.", CancellationToken.None);
         Log($"Release ready: {release.HtmlUrl}");
         var asset = await github.UploadReleaseAssetAsync(login, settings.ReleaseRepo, release.Id, settings.OutputZip, Log, CancellationToken.None);
         downloadUrlBox.Text = asset.BrowserDownloadUrl;
@@ -1340,8 +1444,15 @@ public sealed class AnomiePublisherForm : Form
     {
         await SignInIfNeededAsync();
         await ReadDllMetadataAsync();
+        var existingAutoUpdateEntry = await TryConfigureExistingNomnomAutoUpdateTargetAsync(modIdBox.Text.Trim(), true);
         await PackageZipAsync();
         await UploadReleaseAsync();
+        if (existingAutoUpdateEntry)
+        {
+            Log("Existing NOMNOM auto-update manifest detected. Uploaded the new GitHub release only; NOMNOM will add the new artifact during its scheduled scan.");
+            SetStatus("Update release uploaded. NOMNOM will auto-update the manifest.");
+            return;
+        }
         await GenerateManifestAsync(true);
         await PublishManifestPrAsync();
         SetStatus("Full publish complete.");
@@ -1940,6 +2051,15 @@ public sealed class AnomiePublisherForm : Form
         Log($"Release hash calculated locally: {digest}");
     }
 
+    private static void ValidateParsableReleaseTag(string tag)
+    {
+        var cleaned = NormalizeReleaseVersion(tag);
+        if (string.IsNullOrWhiteSpace(cleaned) || !Regex.IsMatch(cleaned, @"^\d+(?:\.\d+){1,4}$"))
+        {
+            throw new InvalidOperationException($"Release tag '{tag}' is not a parsable version tag. NOMNOM auto-update expects release tags like v1.2.3 or 1.2.3.");
+        }
+    }
+
     private static string ComputeSha256Digest(string filePath)
     {
         using var stream = File.OpenRead(filePath);
@@ -2098,15 +2218,17 @@ public sealed class AnomiePublisherForm : Form
         }
 
         await LoadSelectedModAsync();
-        if (File.Exists(dllPathBox.Text.Trim()))
+        if (!File.Exists(dllPathBox.Text.Trim())) throw new InvalidOperationException("Select the rebuilt DLL for the new mod version before uploading an update release.");
+        await ReadDllMetadataAsync();
+        var hasAutoUpdateManifest = await TryConfigureExistingNomnomAutoUpdateTargetAsync(modIdBox.Text.Trim(), true);
+        if (!hasAutoUpdateManifest)
         {
-            await ReadDllMetadataAsync();
-            await PackageZipAsync();
+            throw new InvalidOperationException("No existing NOMNOM manifest with githubOwner/githubRepoName and autoUpdateArtifacts=True was found for this Mod ID. Use Full Publish / Fork + open PR for the initial submission or metadata changes.");
         }
-        if (File.Exists(outputZipBox.Text.Trim())) await UploadReleaseAsync();
-        await GenerateManifestAsync(true);
-        await PublishManifestPrAsync();
-        SetStatus("Selected mod update submitted.");
+        await PackageZipAsync();
+        await UploadReleaseAsync();
+        Log("Update uploaded as a new GitHub release only. NOMNOM will add the artifact automatically during its hourly scan.");
+        SetStatus("Update release uploaded. NOMNOM will auto-update the manifest.");
     }
 
     private async Task DeleteSelectedReleaseAsync()
@@ -2156,6 +2278,21 @@ public sealed class AnomiePublisherForm : Form
         if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("The selected item has no URL to open.");
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         await Task.CompletedTask;
+    }
+
+    private sealed class CatalogManifestInfo
+    {
+        public string Json { get; set; } = "";
+        public string Source { get; set; } = "";
+        public string ModId { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Tags { get; set; } = "";
+        public string Authors { get; set; } = "";
+        public string InfoUrl { get; set; } = "";
+        public string GitHubOwner { get; set; } = "";
+        public string GitHubRepoName { get; set; } = "";
+        public bool AutoUpdateArtifacts { get; set; }
     }
 
     private static string BuildGitHubHint(string message)

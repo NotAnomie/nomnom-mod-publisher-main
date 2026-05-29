@@ -65,19 +65,18 @@ public sealed class GitHubClient
         await SendJsonAsync(HttpMethod.Post, "https://api.github.com/user/repos", payload, cancellationToken);
     }
 
-    public async Task<GitHubReleaseResult> GetOrCreateReleaseAsync(string owner, string repo, string tag, string title, string body, CancellationToken cancellationToken)
+    public async Task<GitHubReleaseResult?> TryGetReleaseByTagAsync(string owner, string repo, string tag, CancellationToken cancellationToken)
     {
-        using (var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{Uri.EscapeDataString(tag)}"))
-        using (var response = await http.SendAsync(request, cancellationToken))
-        {
-            if (response.IsSuccessStatusCode)
-            {
-                var existingJson = await response.Content.ReadAsStringAsync(cancellationToken);
-                return ParseRelease(JsonNode.Parse(existingJson));
-            }
-            if (response.StatusCode != HttpStatusCode.NotFound) throw await BuildErrorAsync(response, cancellationToken);
-        }
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{Uri.EscapeDataString(tag)}");
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode) throw await BuildErrorAsync(response, cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return ParseRelease(JsonNode.Parse(json));
+    }
 
+    public async Task<GitHubReleaseResult> CreateReleaseAsync(string owner, string repo, string tag, string title, string body, CancellationToken cancellationToken)
+    {
         var payload = new JsonObject
         {
             ["tag_name"] = tag,

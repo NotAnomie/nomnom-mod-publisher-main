@@ -471,3 +471,9 @@ The version in the manifest must match the DLL metadata for plugin artifacts.
 
 This tool is an independent helper for preparing NOMNOM submissions.  
 It is not an official NOMNOM component unless the NOMNOM maintainers decide otherwise.
+
+## Update flow for existing NOMNOM mods
+
+If a mod is already registered in NOMNOM and its manifest has `githubOwner`, `githubRepoName`, and `autoUpdateArtifacts` set to `True`, normal version updates do not need a new manifest PR. Build the DLL with a higher `BepInPlugin` version, select it in the publisher, and upload a new release tag to the same per-mod GitHub repository. NOMNOM scans mod repositories on schedule and adds new release artifacts automatically.
+
+Do not overwrite existing GitHub releases unless you are intentionally fixing a broken upload before anyone uses it. Keeping every version as a new release preserves GitHub download metrics.
